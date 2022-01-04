@@ -25,6 +25,9 @@ from models.dualgcn import DualGCNClassifier
 from models.dualgcn_bert import DualGCNBertClassifier
 from data_utils import SentenceDataset, build_tokenizer, build_embedding_matrix, Tokenizer4BertGCN, ABSAGCNData
 from prepare_vocab import VocabHelp
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+# pip install -i https://pypi.doubanio.com/simple/ --trusted-host pypi.doubanio.com --target=usr/local/anaconda3/envs/dualgcn/lib/python3.6/site-packages six
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -188,9 +191,9 @@ class Instructor:
                     if test_acc > max_test_acc:
                         max_test_acc = test_acc
                         if test_acc > max_test_acc_overall:
-                            if not os.path.exists('./DualGCN/state_dict'):
-                                os.mkdir('./DualGCN/state_dict')
-                            model_path = './DualGCN/state_dict/{}_{}_acc_{:.4f}_f1_{:.4f}'.format(self.opt.model_name, self.opt.dataset, test_acc, f1)
+                            if not os.path.exists('./state_dict'):
+                                os.mkdir('./state_dict')
+                            model_path = './state_dict/{}_{}_acc_{:.4f}_f1_{:.4f}'.format(self.opt.model_name, self.opt.dataset, test_acc, f1)
                             self.best_model = copy.deepcopy(self.model)
                             logger.info('>> saved: {}'.format(model_path))
                     if f1 > max_f1:
@@ -269,16 +272,16 @@ def main():
     
     dataset_files = {
         'restaurant': {
-            'train': './DualGCN/dataset/Restaurants_corenlp/train.json',
-            'test': './DualGCN/dataset/Restaurants_corenlp/test.json',
+            'train': './dataset/Restaurants_corenlp/train.json',
+            'test': './dataset/Restaurants_corenlp/test.json',
         },
         'laptop': {
-            'train': './DualGCN/dataset/Laptops_corenlp/train.json',
-            'test': './DualGCN/dataset/Laptops_corenlp/test.json'
+            'train': './dataset/Laptops_corenlp/train.json',
+            'test': './dataset/Laptops_corenlp/test.json'
         },
         'twitter': {
-            'train': './DualGCN/dataset/Tweets_corenlp/train.json',
-            'test': './DualGCN/dataset/Tweets_corenlp/test.json',
+            'train': './dataset/Tweets_corenlp/train.json',
+            'test': './dataset/Tweets_corenlp/test.json',
         }
     }
     
@@ -310,14 +313,14 @@ def main():
     # Hyperparameters
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='dualgcn', type=str, help=', '.join(model_classes.keys()))
-    parser.add_argument('--dataset', default='laptop', type=str, help=', '.join(dataset_files.keys()))
+    parser.add_argument('--dataset', default='laptop', type=str, help=', '.join(dataset_files.keys())) # restaurant laptop twitter
     parser.add_argument('--optimizer', default='adam', type=str, help=', '.join(optimizers.keys()))
     parser.add_argument('--initializer', default='xavier_uniform_', type=str, help=', '.join(initializers.keys()))
     parser.add_argument('--learning_rate', default=0.002, type=float)
     parser.add_argument('--l2reg', default=1e-4, type=float)
     parser.add_argument('--num_epoch', default=20, type=int)
     parser.add_argument('--batch_size', default=16, type=int)
-    parser.add_argument('--log_step', default=5, type=int)
+    parser.add_argument('--log_step', default=10, type=int)
     parser.add_argument('--embed_dim', default=300, type=int)
     parser.add_argument('--post_dim', type=int, default=30, help='Position embedding dimension.')
     parser.add_argument('--pos_dim', type=int, default=30, help='Pos embedding dimension.')
@@ -338,10 +341,10 @@ def main():
     
     parser.add_argument('--attention_heads', default=1, type=int, help='number of multi-attention heads')
     parser.add_argument('--max_length', default=85, type=int)
-    parser.add_argument('--device', default=None, type=str, help='cpu, cuda')
+    parser.add_argument('--device', default='cuda', type=str, help='cpu, cuda')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
-    parser.add_argument('--vocab_dir', type=str, default='./DualGCN/dataset/Laptops_corenlp')
+    parser.add_argument('--vocab_dir', type=str, default='./dataset/Laptops_corenlp')
     parser.add_argument('--pad_id', default=0, type=int)
     parser.add_argument('--parseadj', default=False, action='store_true', help='dependency probability')
     parser.add_argument('--parsehead', default=False, action='store_true', help='dependency tree')
@@ -372,10 +375,10 @@ def main():
     # set random seed
     setup_seed(opt.seed)
 
-    if not os.path.exists('./DualGCN/log'):
-        os.makedirs('./DualGCN/log', mode=0o777)
+    if not os.path.exists('./log'):
+        os.makedirs('./log', mode=0o777)
     log_file = '{}-{}-{}.log'.format(opt.model_name, opt.dataset, strftime("%Y-%m-%d_%H:%M:%S", localtime()))
-    logger.addHandler(logging.FileHandler("%s/%s" % ('./DualGCN/log', log_file)))
+    logger.addHandler(logging.FileHandler("%s/%s" % ('./log', log_file)))
 
     ins = Instructor(opt)
     ins.run()

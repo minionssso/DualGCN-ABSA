@@ -66,7 +66,7 @@ class GCNAbsaModel(nn.Module):
         self.gcn = GCN(opt, embeddings, opt.hidden_dim, opt.num_layers)
 
     def forward(self, inputs):
-        tok, asp, pos, head, deprel, post, mask, l, adj = inputs           # unpack inputs
+        tok, asp, pos, head, deprel, post, mask, l, adj = inputs  # unpack inputs
         maxlen = max(l.data)
         mask = mask[:, :maxlen]
         if self.opt.parseadj:

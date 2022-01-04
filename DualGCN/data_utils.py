@@ -6,7 +6,7 @@ Date: 2021-06-09 14:17:37
 '''
 import os
 import sys
-sys.path.append(r'./LAL-Parser/src_joint')
+sys.path.append(r'../LAL-Parser/src_joint')
 import re
 import json
 import pickle
@@ -266,7 +266,7 @@ def build_embedding_matrix(vocab, embed_dim, data_file):
     else:
         print('loading word vectors...')
         embedding_matrix = np.zeros((len(vocab), embed_dim))
-        fname = './DualGCN/glove/glove.840B.300d.txt'
+        fname = './glove/glove.840B.300d.txt'
         word_vec = _load_wordvec(fname, embed_dim, vocab)
         for i in range(len(vocab)):
             vec = word_vec.get(vocab.id_to_word(i))

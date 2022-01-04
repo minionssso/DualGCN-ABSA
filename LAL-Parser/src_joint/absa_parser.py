@@ -18,7 +18,7 @@ def torch_load(load_path):
     
     
 class Config(object):
-    model_path_base = './LAL-Parser/best_model/best_parser.pt'
+    model_path_base = '../LAL-Parser/best_model/best_parser.pt'
     contributions = 0
 
 
