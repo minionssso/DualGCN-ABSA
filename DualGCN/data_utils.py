@@ -14,6 +14,10 @@ import numpy as np
 from tqdm import tqdm
 from transformers import BertTokenizer
 from torch.utils.data import Dataset
+import networkx as nx
+import spacy
+from spacy.tokens import Doc
+from tree import head_to_tree, tree_to_adj
 
 
 def ParseData(data_path):
@@ -27,10 +31,12 @@ def ParseData(data_path):
                 length = len(tok)            # real length
                 # if args.lower == True:
                 tok = [t.lower() for t in tok]
-                tok = ' '.join(tok)
+                terms_id = [aspect['from']] if aspect['from'] == (aspect['to']-1) else [aspect['from'], aspect['to']-1]
                 asp = list(aspect['term'])   # aspect
                 asp = [a.lower() for a in asp]
+                _, dist = calculate_dep_dist(tok, asp, terms_id)
                 asp = ' '.join(asp)
+                tok = ' '.join(tok)
                 label = aspect['polarity']   # label
                 pos = list(d['pos'])         # pos_tag 
                 head = list(d['head'])       # head
@@ -50,7 +56,7 @@ def ParseData(data_path):
                 
                 sample = {'text': tok, 'aspect': asp, 'pos': pos, 'post': post, 'head': head,\
                           'deprel': deprel, 'length': length, 'label': label, 'mask': mask, \
-                          'aspect_post': aspect_post, 'text_list': text_list}
+                          'aspect_post': aspect_post, 'text_list': text_list, 'dist': dist}
                 all_data.append(sample)
 
     return all_data
@@ -188,6 +194,7 @@ class SentenceDataset(Dataset):
             deprel = [dep_vocab.stoi.get(t, dep_vocab.unk_index) for t in obj['deprel']]
             deprel = tokenizer.pad_sequence(deprel, pad_id=opt.pad_id, maxlen=opt.max_length, dtype='int64', padding='post', truncating='post')
             mask = tokenizer.pad_sequence(obj['mask'], pad_id=opt.pad_id, maxlen=opt.max_length, dtype='int64', padding='post', truncating='post')
+            dist = tokenizer.pad_sequence(obj['dist'], pad_id=opt.pad_id, maxlen=opt.max_length, dtype='float32', padding='post', truncating='post')
 
             adj = np.ones(opt.max_length) * opt.pad_id
             if opt.parseadj:
@@ -202,6 +209,16 @@ class SentenceDataset(Dataset):
                     adj = adj + adj.T
                 adj = adj + np.eye(adj.shape[0])
                 adj = np.pad(adj, (0, opt.max_length - adj.shape[0]), 'constant')
+            # else:
+            #     def inputs_to_tree_reps(maxlen, head, words, l):
+            #         trees = [head_to_tree(head[i], words[i], l[i]) for i in range(l.size(0))]
+            #         adj = [tree_to_adj(maxlen, tree, directed=self.args.direct, self_loop=self.args.loop).reshape(1, maxlen, maxlen) for tree in trees]
+            #         adj = np.concatenate(adj, axis=0)
+            #         return adj
+            #
+            #     maxlen = max(length)
+            #     adj = torch.tensor(inputs_to_tree_reps(maxlen, head, tok, length)).to(self.args.device)
+
             
             if opt.parsehead:
                 from absa_parser import headparser
@@ -212,6 +229,7 @@ class SentenceDataset(Dataset):
                 head = tokenizer.pad_sequence(obj['head'], pad_id=opt.pad_id, maxlen=opt.max_length, dtype='int64', padding='post', truncating='post')
             length = obj['length']
             polarity = polarity_dict[obj['label']]
+
             data.append({
                 'text': text, 
                 'aspect': aspect, 
@@ -222,6 +240,7 @@ class SentenceDataset(Dataset):
                 'adj': adj,
                 'mask': mask,
                 'length': length,
+                'dist': dist,
                 'polarity': polarity
             })
 
@@ -411,3 +430,49 @@ class ABSAGCNData(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx]
+
+
+class WhitespaceTokenizer(object):
+    # 重写spcy的分词（空格完成分词）
+    def __init__(self, vocab):
+        self.vocab = vocab
+
+    def __call__(self, text):
+        words = text.split()
+        # All tokens 'own' a subsequent space character in this tokenizer
+        spaces = [True] * len(words)
+        return Doc(self.vocab, words=words, spaces=spaces)
+
+
+nlp = spacy.load("en_core_web_sm")  # 得到句法依赖树的工具
+nlp.tokenizer = WhitespaceTokenizer(nlp.vocab)
+
+# 计算依赖树词距离
+def calculate_dep_dist(tok, aspect, terms_id):
+    sent = ' '
+    sent = sent.join(tok)
+    doc = nlp(sent)
+    # Load spacy's dependency tree into a networkx graph
+    edges = []
+    # term_ids = [0] * len(aspect)
+    for token in doc:  # 遍历句子中的token
+        for child in token.children:  # 遍历所有token，提取和边child的关系
+            edges.append(('{}_{}'.format(token.lower_, token.i),
+                          '{}_{}'.format(child.lower_, child.i)))
+
+    graph = nx.Graph(edges)
+
+    dist = [0.0]*len(doc)
+    text = [0]*len(doc)
+    for i, word in enumerate(doc):
+        source = '{}_{}'.format(word.lower_, word.i)
+        sum = 0
+        for term_id, term in zip(terms_id, aspect):
+            target = '{}_{}'.format(term, term_id)
+            try:
+                sum += nx.shortest_path_length(graph, source=source, target=target)  # 求最短路径长度
+            except:
+                sum += len(doc)  # No connection between source and target
+        dist[i] = sum/len(aspect)  # 多个asp token分别和句子token之间的距离，再除以asp token的数量
+        text[i] = word.text
+    return text, dist

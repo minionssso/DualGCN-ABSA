@@ -6,7 +6,9 @@ Date: 2021-06-09 14:17:37
 '''
 import os
 import sys
+import six
 import copy
+import fitlog
 import random
 import logging
 import argparse
@@ -23,10 +25,13 @@ from models.syngcn import SynGCNClassifier
 from models.semgcn import SemGCNClassifier
 from models.dualgcn import DualGCNClassifier
 from models.dualgcn_bert import DualGCNBertClassifier
+from models.ssdgcn import SSDGCNClassifier
+from models.ssdgcn_bert import SSDGCNBertClassifier
 from data_utils import SentenceDataset, build_tokenizer, build_embedding_matrix, Tokenizer4BertGCN, ABSAGCNData
 from prepare_vocab import VocabHelp
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)
+os.environ['NUMEXPR_MAX_THREADS'] = '16'
 # pip install -i https://pypi.doubanio.com/simple/ --trusted-host pypi.doubanio.com --target=usr/local/anaconda3/envs/dualgcn/lib/python3.6/site-packages six
 
 logger = logging.getLogger()
@@ -88,12 +93,12 @@ class Instructor:
     
     def _print_args(self):
         n_trainable_params, n_nontrainable_params = 0, 0
-        for p in self.model.parameters():
-            n_params = torch.prod(torch.tensor(p.shape))
+        for p in self.model.parameters():  # cuda
+            n_params = torch.prod(torch.tensor(p.shape)).long()
             if p.requires_grad:
-                n_trainable_params += n_params
+                n_trainable_params += n_params  # n_params=int
             else:
-                n_nontrainable_params += n_params
+                n_nontrainable_params += n_params  # n_nontrainable_params=int
 
         logger.info('n_trainable_params: {0}, n_nontrainable_params: {1}'.format(n_trainable_params, n_nontrainable_params))
         logger.info('training arguments:')
@@ -107,7 +112,7 @@ class Instructor:
                 if len(p.shape) > 1:
                     self.opt.initializer(p)   # xavier_uniform_
                 else:
-                    stdv = 1. / (p.shape[0]**0.5)
+                    stdv = 1. / (p.shape[0]**0.5)  # p.shape[0]是size大小
                     torch.nn.init.uniform_(p, a=-stdv, b=stdv)
 
     def get_bert_optimizer(self, model):
@@ -196,9 +201,12 @@ class Instructor:
                             model_path = './state_dict/{}_{}_acc_{:.4f}_f1_{:.4f}'.format(self.opt.model_name, self.opt.dataset, test_acc, f1)
                             self.best_model = copy.deepcopy(self.model)
                             logger.info('>> saved: {}'.format(model_path))
+                            fitlog.add_best_metric({"test": {"best_Acc": test_acc}})
+                            fitlog.add_best_metric({"test": {"best_f1": f1}})
                     if f1 > max_f1:
                         max_f1 = f1
                     logger.info('loss: {:.4f}, acc: {:.4f}, test_acc: {:.4f}, f1: {:.4f}'.format(loss.item(), train_acc, test_acc, f1))
+
         return max_test_acc, max_f1, model_path
     
     def _evaluate(self, show_results=False):
@@ -239,7 +247,7 @@ class Instructor:
     
     def run(self):
         criterion = nn.CrossEntropyLoss()
-        if 'bert' not in self.opt.model_name:
+        if 'bert' not in self.opt.model_name:  # Glove
             _params = filter(lambda p: p.requires_grad, self.model.parameters())
             optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)
         else:
@@ -257,6 +265,10 @@ class Instructor:
         logger.info('#' * 60)
         logger.info('max_test_acc_overall:{}'.format(max_test_acc_overall))
         logger.info('max_f1_overall:{}'.format(max_f1_overall))
+
+        fitlog.add_best_metric({"test": {"max_test_acc_overall": max_test_acc_overall}})
+        fitlog.add_best_metric({"test": {"max_f1_overall": max_f1_overall}})
+        fitlog.finish()
         self._test()
 
 
@@ -268,6 +280,8 @@ def main():
         'semgcn': SemGCNClassifier,
         'dualgcn': DualGCNClassifier,
         'dualgcnbert': DualGCNBertClassifier,
+        'ssdgcn': SSDGCNClassifier,
+        'ssdgcn_bert': SSDGCNBertClassifier
     }
     
     dataset_files = {
@@ -291,7 +305,9 @@ def main():
         'syngcn': ['text', 'aspect', 'pos', 'head', 'deprel', 'post', 'mask', 'length', 'adj'],
         'semgcn': ['text', 'aspect', 'pos', 'head', 'deprel', 'post', 'mask', 'length'],
         'dualgcn': ['text', 'aspect', 'pos', 'head', 'deprel', 'post', 'mask', 'length', 'adj'],
-        'dualgcnbert': ['text_bert_indices', 'bert_segments_ids', 'attention_mask', 'asp_start', 'asp_end', 'adj_matrix', 'src_mask', 'aspect_mask']
+        'dualgcnbert': ['text_bert_indices', 'bert_segments_ids', 'attention_mask', 'asp_start', 'asp_end', 'adj_matrix', 'src_mask', 'aspect_mask'],
+        'ssdgcn': ['text', 'aspect', 'pos', 'head', 'deprel', 'post', 'mask', 'length','adj', 'dist'],
+        'ssdgcnbert': ['text', 'aspect', 'pos', 'head', 'deprel', 'post', 'mask', 'length','adj', 'word_idx', 'segment_ids', 'dist']
     }
     
     initializers = {
@@ -312,7 +328,7 @@ def main():
     
     # Hyperparameters
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name', default='dualgcn', type=str, help=', '.join(model_classes.keys()))
+    parser.add_argument('--model_name', default='ssdgcn', type=str, help=', '.join(model_classes.keys()))  # dualgcn bert ssdgcn
     parser.add_argument('--dataset', default='laptop', type=str, help=', '.join(dataset_files.keys())) # restaurant laptop twitter
     parser.add_argument('--optimizer', default='adam', type=str, help=', '.join(optimizers.keys()))
     parser.add_argument('--initializer', default='xavier_uniform_', type=str, help=', '.join(initializers.keys()))
@@ -330,9 +346,13 @@ def main():
 
     parser.add_argument('--input_dropout', type=float, default=0.7, help='Input dropout rate.')
     parser.add_argument('--gcn_dropout', type=float, default=0.1, help='GCN layer dropout rate.')
+    parser.add_argument('--mhsa_dropout', type=float, default=0.1, help='MHSA layer dropout rate.')
+
     parser.add_argument('--lower', default=True, help='Lowercase all words.')
     parser.add_argument('--direct', default=False, help='directed graph or undirected graph')
     parser.add_argument('--loop', default=True)
+    parser.add_argument('--mhgcn', default=True, help='mhgcn or gcn')  # TODO 消融
+    parser.add_argument('--gcn_heads', default=4, type=int, help='number of multi-head gcn')
 
     parser.add_argument('--bidirect', default=True, help='Do use bi-RNN layer.')
     parser.add_argument('--rnn_hidden', type=int, default=50, help='RNN hidden state size.')
@@ -344,7 +364,7 @@ def main():
     parser.add_argument('--device', default='cuda', type=str, help='cpu, cuda')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deay if we apply some.")
-    parser.add_argument('--vocab_dir', type=str, default='./dataset/Laptops_corenlp')
+    parser.add_argument('--vocab_dir', type=str, default='./dataset/Laptops_corenlp')  # TODO
     parser.add_argument('--pad_id', default=0, type=int)
     parser.add_argument('--parseadj', default=False, action='store_true', help='dependency probability')
     parser.add_argument('--parsehead', default=False, action='store_true', help='dependency tree')
@@ -352,6 +372,14 @@ def main():
     parser.add_argument('--losstype', default=None, type=str, help="['doubleloss', 'orthogonalloss', 'differentiatedloss']")
     parser.add_argument('--alpha', default=0.25, type=float)
     parser.add_argument('--beta', default=0.25, type=float)
+
+    # dist mask
+    parser.add_argument('--sem_srd', type=int, default=5, help='set sem SRD')
+    parser.add_argument('--syn_srd', type=int, default=2, help='set syn SRD')
+    parser.add_argument('--local_sem_focus', type=str, default='sem_cdm', help='sem_cdm or sem_cdw or n')
+    parser.add_argument('--local_syn_focus', type=str, default='syn_cdm', help='syn_cdm or syn_cdw or n')
+    # shortcut
+    parser.add_argument('--shortcut', type=bool, default=True, help='shortcut or not')
     
     # * bert
     parser.add_argument('--pretrained_bert_name', default='bert-base-uncased', type=str)
@@ -361,7 +389,7 @@ def main():
     parser.add_argument('--diff_lr', default=False, action='store_true')
     parser.add_argument('--bert_lr', default=2e-5, type=float)
     opt = parser.parse_args()
-    	
+
     opt.model_class = model_classes[opt.model_name]
     opt.dataset_file = dataset_files[opt.dataset]
     opt.inputs_cols = input_colses[opt.model_name]
@@ -374,6 +402,28 @@ def main():
     
     # set random seed
     setup_seed(opt.seed)
+
+    # restaurant laptop twitter
+    if 'bert' in opt.model_name:
+        if opt.dataset == 'restaurant':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/BERT/Rests")
+        elif opt.dataset == 'laptop':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/BERT/Laptops")
+        elif opt.dataset == 'twitter':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/BERT/Tweets")
+        elif opt.dataset == 'MAMS':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/BERT/MAMS")
+    else:
+        if opt.dataset == 'restaurant':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/Glove/Rests")
+        elif opt.dataset == 'laptop':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/Glove/Laptops")
+        elif opt.dataset == 'twitter':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/Glove/Tweets")
+        elif opt.dataset == 'MAMS':
+            fitlog.set_log_dir("logs/Dual_MGCN_MHSA/Glove/MAMS")
+    for arg, value in sorted(six.iteritems(vars(opt))):
+        fitlog.add_hyper({arg: value})  # 记录ArgumentParser的参数
 
     if not os.path.exists('./log'):
         os.makedirs('./log', mode=0o777)

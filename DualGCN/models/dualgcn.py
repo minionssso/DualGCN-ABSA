@@ -57,7 +57,7 @@ class GCNAbsaModel(nn.Module):
     def __init__(self, embedding_matrix, opt):
         super().__init__()
         self.opt = opt
-        self.embedding_matrix = embedding_matrix
+        self.embedding_matrix = embedding_matrix  # 4520,300
         self.emb = nn.Embedding.from_pretrained(torch.tensor(embedding_matrix, dtype=torch.float), freeze=True)
         self.pos_emb = nn.Embedding(opt.pos_size, opt.pos_dim, padding_idx=0) if opt.pos_dim > 0 else None        # POS emb
         self.post_emb = nn.Embedding(opt.post_size, opt.post_dim, padding_idx=0) if opt.post_dim > 0 else None    # position emb
@@ -80,7 +80,7 @@ class GCNAbsaModel(nn.Module):
                 return adj.cuda()
             adj_dep = inputs_to_tree_reps(head.data, tok.data, l.data)
 
-        h1, h2, adj_ag = self.gcn(adj_dep, inputs)
+        h1, h2, adj_ag = self.gcn(adj_dep, inputs)  # (16,47,50)
         # avg pooling asp feature
         asp_wn = mask.sum(dim=1).unsqueeze(-1)                        # aspect words num
         mask = mask.unsqueeze(-1).repeat(1,1,self.opt.hidden_dim)     # mask for h
@@ -154,7 +154,7 @@ class GCN(nn.Module):
         # rnn layer
         self.rnn.flatten_parameters()
         gcn_inputs = self.rnn_drop(self.encode_with_rnn(embs, l, tok.size()[0]))
-        
+        #
         denom_dep = adj.sum(2).unsqueeze(2) + 1
         attn_tensor = self.attn(gcn_inputs, gcn_inputs, src_mask)
         attn_adj_list = [attn_adj.squeeze(1) for attn_adj in torch.split(attn_tensor, 1, dim=1)]
